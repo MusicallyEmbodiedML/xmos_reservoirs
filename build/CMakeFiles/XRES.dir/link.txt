@@ -1,0 +1,1 @@
+/home/ck84/apps/XMOS/XTC/15.2.1/bin/xcc -target=XK-EVK-XU316 -DEIGEN_DONT_VECTORIZE -DEIGEN_DONT_ALIGN -Os -report -fdata-sections -ffunction-sections -Wl --gc-sections CMakeFiles/XRES.dir/main.cpp.o -o XRES 

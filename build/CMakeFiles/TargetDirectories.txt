@@ -1,0 +1,3 @@
+/home/ck84/src/xmos/xmos_reservoirs/build/CMakeFiles/XRES.dir
+/home/ck84/src/xmos/xmos_reservoirs/build/CMakeFiles/edit_cache.dir
+/home/ck84/src/xmos/xmos_reservoirs/build/CMakeFiles/rebuild_cache.dir

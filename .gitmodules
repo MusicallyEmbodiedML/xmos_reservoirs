@@ -1,0 +1,3 @@
+[submodule "CControl"]
+	path = CControl
+	url = https://github.com/MusicallyEmbodiedML/CControl.git
