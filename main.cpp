@@ -1,5 +1,3 @@
-// #define THIS_RUNS_ON_XMOS 
-// #define EIGEN_DONT_ALIGN
 #include <platform.h>
 #include <stdio.h>
 // #include <xcore/port.h>
@@ -8,14 +6,6 @@
 // #include <xcore/clock.h>
 #include <vector>
 #include <random>
-// using namespace std;
-// #include "eigen.h"
-
-// extern "C" {
-// #include "EmbeddedLapack/src/LinearAlgebra/declareFunctions.h"
-// #include "CControl/src/CControl/Sources/LinearAlgebra/linearalgebra.h"
-
-// }
 
 #include "jacobi_pd.hpp"
 #include "matrix_alloc_jpd.hpp"
@@ -31,16 +21,56 @@ struct reservoir {
   RESTYPE scale;
   size_t N;
   size_t N_INS;
+  RESTYPE alpha;
+  RESTYPE eig;
+};
+
+struct readout {
+  std::vector<RESTYPE> weights;
+  size_t nOutputs;
 };
 
 struct matrixOps {
-  static void randomiseMatrix(std::vector<RESTYPE> &mat, float connectionProb, RESTYPE low, RESTYPE high) {
+
+  void mul(std::vector<RESTYPE> &A, std::vector<RESTYPE> &B, std::vector<RESTYPE> &C, int row_a, int column_a, int column_b) {
+
+    // Data matrix
+    RESTYPE* data_a = A.data();
+    RESTYPE* data_b = B.data();
+    RESTYPE* data_c = C.data();
+
+    for (int i = 0; i < row_a; i++) {
+
+      // Then we go through every column of b
+      for (size_t j = 0; j < column_b; j++) {
+        data_a = &A[i * column_a];
+        data_b = &B[j];
+
+        *data_c = 0; // Reset
+        // And we multiply rows from a with columns of b
+        for (size_t k = 0; k < column_a; k++) {
+          *data_c += *data_a * *data_b;
+          data_a++;
+          data_b += column_b;
+        }
+        data_c++;
+      }
+    }
+  }
+
+  static void randomiseMatrix(std::vector<RESTYPE> &mat, float prob, RESTYPE low, RESTYPE high) {
     std::random_device rd;  // Will be used to obtain a seed for the random number engine
     std::mt19937 gen(rd()); // Standard mersenne_twister_engine seeded with rd()
     std::uniform_real_distribution<> dis(low, high);
     std::uniform_real_distribution<> cxdis(0.f,1.f);
     for(size_t i=0; i < mat.size(); i++) {
-      mat[i] = cxdis(gen) < connectionProb  ? dis(gen) : 0;
+      mat[i] = cxdis(gen) < prob  ? dis(gen) : 0;
+    }
+  }
+
+  static void scalarMul(std::vector<RESTYPE> &mat, RESTYPE x) {
+    for(size_t i=0; i < mat.size(); i++) {
+      mat[i] *= x;
     }
   }
 
@@ -65,7 +95,7 @@ struct matrixOps {
 
 struct reserviorOps {
   static void initReservoir(reservoir &res, size_t nInputs, size_t nRes,
-  float connProb, RESTYPE resLow, RESTYPE resHigh) {
+  float connProb, RESTYPE resLow, RESTYPE resHigh, RESTYPE inConnProb, RESTYPE inLow, RESTYPE inHigh, RESTYPE alpha) {
     res.N = nRes;
     res.N_INS = nInputs;
     res.noise=0.f;
@@ -74,13 +104,12 @@ struct reserviorOps {
     res.inWeights.resize(nRes * nInputs);
     res.resWeights.resize(nRes * nRes);
     res.inputs.resize(nInputs);
+    res.alpha = alpha;
+    //init Win
+    matrixOps::randomiseMatrix(res.inWeights, inConnProb, inLow, inHigh);
     //init reservoir
     matrixOps::randomiseMatrix(res.resWeights, connProb, resLow, resHigh);
     //scaling
-    // std::vector<float> Ereal(res.N); // Eigenvalues real
-    // std::vector<float> Eimag(res.N); // Eigenvalues imag part
-    // std::vector<float> Vreal(res.N * res.N);
-    // std::vector<float> Vimag(res.N * res.N);
 
     // int n = 3;       // Matrix size
     float **M;      // A symmetric n x n matrix you want to diagonalize
@@ -98,40 +127,24 @@ struct reserviorOps {
     matrix_alloc_jpd::Alloc2D(res.N,res.N, &evecs);
     evals = new float[res.N];
 
-
-    // M[0][0] = 2.0; M[0][1] = 1.0; M[0][2] = 1.0;
-    // M[1][0] = 1.0; M[1][1] = 2.0; M[1][2] =-1.0;  //Note: The matrix
-    // M[2][0] = 1.0; M[2][1] =-1.0; M[2][2] = 2.0;  //must be symmetric.
-
     jacobi_pd::Jacobi<float, float*, float**> eigen_calc(res.N);
 
     eigen_calc.Diagonalize(M, evals, evecs);  //(successful if return value is > 0)
-
-// If you have many matrices to diagonalize, you can re-use "eigen_calc". (This
-// is more efficient than creating a new "Jacobi" class instance for each use.)
 
     printf("eigenvalues:  ");
     for (int i=0; i < res.N; i++)
       printf("%f, ", evals[i]);
     printf("\n");
 
+    //scale by largest eigenvalue
+    res.eig = evals[0];
+    RESTYPE scaling = res.alpha / fabs(res.eig); 
+    matrixOps::scalarMul(res.resWeights, scaling);
+
+    //clear up
     delete M;
     delete evecs; 
     delete evals;
-    // cout << endl;
-    // for (int i=0; i < n; i++) {
-    //   cout << "eigenvector" <<i+1<< ": ";
-    //   for (int j=0; j < n; j++)
-    //     cout << evecs[i][j] << " ";
-    //   cout << endl;
-    // }
-    // std::vector<double> tmp = matrixOps::floatToDouble(res.resWeights);
-    
-    // Solve
-    // eig(res.resWeights.data(),Ereal.data(),Eimag.data(),Vreal.data(),
-    // Vimag.data(),res.N);
-    
-    // matrixOps::printMatrix<float>(Ereal, 1, res.N);
   };
 
 
@@ -142,11 +155,30 @@ struct reserviorOps {
     printf("Res weights: \n");
     matrixOps::printMatrix(res.resWeights, res.N, res.N);
   };
+
+  static void iterateReservoir(reservoir &res, std::vector<RESTYPE> &inputs) {
+    for(size_t i=0; i < res.N_INS; i++) {
+      res.inputs[i] = inputs[i];
+    }
+
+  }
+};
+
+struct readoutOps {
+  static void initReadout(readout &ro, reservoir &res, size_t nOutputs) {
+    ro.nOutputs = nOutputs;
+    ro.weights.resize(res.N * nOutputs);
+  };
+};
+
+struct simulatorOps {
 };
 
 int main() {
   printf("XMOS Reservoir Test\n");
   reservoir res;
-  reserviorOps::initReservoir(res, 2, 10, 0.2, -1.0, 0.4);
-  reserviorOps::dump(res);
+  reserviorOps::initReservoir(res, 2, 10, 0.2, -1.0, 0.4, 0.5, -1, 1, 1.1);
+  // reserviorOps::dump(res);
+  readout ro;
+  readoutOps::initReadout(ro, res, 1);
 }
